@@ -1,0 +1,32 @@
+# Global Bot Settings
+bot_name: "Delphi_Vanguard"
+version: "baseline-1.0.0"
+
+symbols:
+  - "EURUSD"
+  - "GBPUSD"
+  - "USDJPY"
+  - "AUDUSD"
+  - "USDCAD"
+  - "USDCHF"
+  - "NZDUSD"
+  - "EURGBP"
+  - "EURJPY"
+  - "GBPJPY"
+  - "XAUUSD"
+
+timeframe: "1h"
+regime_detection: true
+lookback_period: 100
+
+risk_per_trade_percent: 1.0
+default_stop_loss_atr: 1.5
+default_take_profit_ratio: 2.0
+
+news_buffer_before: 30
+news_buffer_after: 15
+impact_levels: ["High", "Medium"]
+
+discord:
+  webhook_url: "${DISCORD_WEBHOOK_URL}"
+  alert_role_id: "SIGNAL_SUBSCRIBER"
