@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime, timezone
 from uuid import uuid4
 
 from vanguard.approval import ApprovalStore
@@ -35,11 +34,19 @@ class VanguardPipeline:
         self.ledger.append("APPROVAL_REQUESTED", proposal.signal_id, asdict(approval))
         return sm, risk, approval
 
-    def execute_after_approval(self, proposal: SignalProposal, approval_id: str, approver: str, risk: RiskDecision, approve: bool = True):
+    def execute_after_approval(self, proposal: SignalProposal, approval_id: str, approver: str, risk: RiskDecision | None = None, approve: bool = True):
         sm = TradeStateMachine()
         sm.transition(TradeState.SIGNAL_DETECTED)
         sm.transition(TradeState.RISK_VALIDATED)
         sm.transition(TradeState.PENDING_HUMAN_APPROVAL)
+
+        approval = self.approvals.get(approval_id)
+        if approval.signal_id != proposal.signal_id:
+            raise ValueError("approval does not belong to proposal")
+        approved_risk = approval.risk
+        if risk is not None and risk != approved_risk:
+            raise ValueError("supplied risk decision does not match approved risk decision")
+
         decision = self.approvals.decide(approval_id, approver, approve)
         self.ledger.append("HUMAN_DECISION", proposal.signal_id, asdict(decision))
         if not decision.approved:
@@ -48,13 +55,28 @@ class VanguardPipeline:
         sm.transition(TradeState.APPROVED)
         sm.transition(TradeState.EXECUTION_PENDING)
         sm.transition(TradeState.PRE_EXECUTION_REVALIDATION)
+
         fresh_quote = self.broker.quote(proposal.symbol)
         account = self.broker.account()
-        fresh_risk = self.risk_engine.evaluate(proposal, fresh_quote, account, 0, 0.0, 0.0, 100_000.0)
-        if not fresh_risk.approved or fresh_risk.volume != risk.volume:
+        context = approved_risk.context
+        fresh_risk = self.risk_engine.evaluate(
+            proposal,
+            fresh_quote,
+            account,
+            context.open_positions,
+            context.daily_loss_percent,
+            context.drawdown_percent,
+            context.value_per_price_unit,
+        )
+        if not fresh_risk.approved:
             sm.transition(TradeState.REJECTED)
             self.ledger.append("PRE_EXECUTION_REJECTED", proposal.signal_id, {"reasons": fresh_risk.reason_codes})
             return sm, None
+        if fresh_risk.volume != approved_risk.volume:
+            sm.transition(TradeState.REJECTED)
+            self.ledger.append("PRE_EXECUTION_REJECTED", proposal.signal_id, {"reasons": ("APPROVED_VOLUME_CHANGED",), "approved_volume": approved_risk.volume, "fresh_volume": fresh_risk.volume})
+            return sm, None
+
         request = OrderRequest(str(uuid4()), proposal.signal_id, proposal.symbol, proposal.side, fresh_risk.volume, proposal.stop_loss, proposal.take_profit, self.broker_mode())
         self.ledger.append("ORDER_SUBMIT_INTENT", proposal.signal_id, asdict(request))
         sm.transition(TradeState.ORDER_SUBMITTED)
