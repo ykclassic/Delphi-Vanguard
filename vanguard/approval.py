@@ -41,13 +41,16 @@ class ApprovalStore:
 
     def decide(self, approval_id: str, approver: str, approved: bool, now: datetime | None = None) -> ApprovalDecision:
         now = now or datetime.now(timezone.utc)
-        with self._lock:
-            request = self._pending.pop(approval_id, None)
-            if request is None or approval_id in self._used:
-                raise ValueError("approval is missing or already consumed")
-            self._used.add(approval_id)
-        if request.expires_at <= now:
-            raise ValueError("approval has expired")
         if not approver.strip():
             raise ValueError("approver identity is required")
+        with self._lock:
+            request = self._pending.get(approval_id)
+            if request is None or approval_id in self._used:
+                raise ValueError("approval is missing or already consumed")
+            if request.expires_at <= now:
+                self._pending.pop(approval_id, None)
+                self._used.add(approval_id)
+                raise ValueError("approval has expired")
+            self._pending.pop(approval_id)
+            self._used.add(approval_id)
         return ApprovalDecision(approval_id, request.signal_id, approver, approved, now)
