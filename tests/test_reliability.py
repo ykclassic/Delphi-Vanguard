@@ -4,7 +4,7 @@ from tempfile import TemporaryDirectory
 import pytest
 
 from vanguard.approval import ApprovalStore
-from vanguard.interfaces import AccountSnapshot, ExecutionMode, Quote, SignalProposal, Side
+from vanguard.interfaces import AccountSnapshot, ExecutionMode, OrderRequest, Quote, SignalProposal, Side
 from vanguard.ledger import SQLiteLedger
 from vanguard.market_data import PaperMarketData, StaleQuote, validate_quote
 from vanguard.paper import PaperBroker
@@ -17,7 +17,7 @@ NOW = datetime.now(timezone.utc)
 
 
 def proposal(side=Side.BUY, expires=None):
-    return SignalProposal("sig-1", "EURUSD", side, "trend", "1.0", NOW, expires or NOW + timedelta(seconds=30), 1.1000, 1.0980, 1.1040, .8, "test", {"x": 1.0})
+    return SignalProposal("sig-1", "EURUSD", side, "trend", "1.0", NOW, expires or NOW + timedelta(seconds=30), 1.1000, 1.0980, 1.1045, .8, "test", {"x": 1.0})
 
 
 def quote():
@@ -60,7 +60,6 @@ def test_approval_is_single_use_and_requires_identity():
     request = store.create(proposal(), risk)
     with pytest.raises(ValueError):
         store.decide(request.approval_id, "", True)
-    # failed identity consumes the request only after lookup; a second valid decision must still be possible.
     decision = store.decide(request.approval_id, "operator", True)
     assert decision.approved
     with pytest.raises(ValueError):
@@ -83,7 +82,7 @@ def test_sqlite_ledger_is_durable_and_hashes_events():
 def test_paper_broker_is_idempotent():
     md = PaperMarketData({"EURUSD": quote()})
     broker = PaperBroker(md)
-    request = __import__("vanguard.interfaces", fromlist=["OrderRequest"]).OrderRequest("o1", "sig-1", "EURUSD", Side.BUY, .1, 1.098, 1.104, ExecutionMode.PAPER)
+    request = OrderRequest("o1", "sig-1", "EURUSD", Side.BUY, .1, 1.098, 1.1045, ExecutionMode.PAPER)
     first = broker.submit(request)
     second = broker.submit(request)
     assert first == second
