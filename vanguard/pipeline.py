@@ -2,21 +2,22 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime, timezone
+from typing import Callable
 from uuid import uuid4
 
 from vanguard.approval import ApprovalStore
-from vanguard.interfaces import BrokerGateway, Ledger, OrderRequest, RiskDecision, SignalProposal
+from vanguard.interfaces import BrokerGateway, Ledger, OrderRequest, RiskContext, RiskDecision, SignalProposal
 from vanguard.risk_engine import RiskEngine
 from vanguard.state_machine import TradeState, TradeStateMachine
 
 
 class VanguardPipeline:
-    def __init__(self, broker: BrokerGateway, risk_engine: RiskEngine, approvals: ApprovalStore, ledger: Ledger) -> None:
+    def __init__(self, broker: BrokerGateway, risk_engine: RiskEngine, approvals: ApprovalStore, ledger: Ledger, risk_context_provider: Callable[[], RiskContext] | None = None) -> None:
         self.broker = broker
         self.risk_engine = risk_engine
         self.approvals = approvals
         self.ledger = ledger
+        self.risk_context_provider = risk_context_provider
 
     def evaluate(self, proposal: SignalProposal, open_positions: int = 0, daily_loss_percent: float = 0.0, drawdown_percent: float = 0.0, value_per_price_unit: float = 100_000.0):
         sm = TradeStateMachine()
@@ -35,11 +36,19 @@ class VanguardPipeline:
         self.ledger.append("APPROVAL_REQUESTED", proposal.signal_id, asdict(approval))
         return sm, risk, approval
 
-    def execute_after_approval(self, proposal: SignalProposal, approval_id: str, approver: str, risk: RiskDecision, approve: bool = True):
+    def execute_after_approval(self, proposal: SignalProposal, approval_id: str, approver: str, risk: RiskDecision | None = None, approve: bool = True):
         sm = TradeStateMachine()
         sm.transition(TradeState.SIGNAL_DETECTED)
         sm.transition(TradeState.RISK_VALIDATED)
         sm.transition(TradeState.PENDING_HUMAN_APPROVAL)
+
+        approval = self.approvals.get(approval_id)
+        if approval.signal_id != proposal.signal_id:
+            raise ValueError("approval does not belong to proposal")
+        approved_risk = approval.risk
+        if risk is not None and risk != approved_risk:
+            raise ValueError("supplied risk decision does not match approved risk decision")
+
         decision = self.approvals.decide(approval_id, approver, approve)
         self.ledger.append("HUMAN_DECISION", proposal.signal_id, asdict(decision))
         if not decision.approved:
@@ -48,13 +57,32 @@ class VanguardPipeline:
         sm.transition(TradeState.APPROVED)
         sm.transition(TradeState.EXECUTION_PENDING)
         sm.transition(TradeState.PRE_EXECUTION_REVALIDATION)
+
         fresh_quote = self.broker.quote(proposal.symbol)
         account = self.broker.account()
-        fresh_risk = self.risk_engine.evaluate(proposal, fresh_quote, account, 0, 0.0, 0.0, 100_000.0)
-        if not fresh_risk.approved or fresh_risk.volume != risk.volume:
+        if self.risk_context_provider is None:
             sm.transition(TradeState.REJECTED)
-            self.ledger.append("PRE_EXECUTION_REJECTED", proposal.signal_id, {"reasons": fresh_risk.reason_codes})
+            self.ledger.append("PRE_EXECUTION_REJECTED", proposal.signal_id, {"reasons": ("RISK_CONTEXT_UNAVAILABLE",)})
             return sm, None
+        context = self.risk_context_provider()
+        fresh_risk = self.risk_engine.evaluate(
+            proposal,
+            fresh_quote,
+            account,
+            context.open_positions,
+            context.daily_loss_percent,
+            context.drawdown_percent,
+            context.value_per_price_unit,
+        )
+        if not fresh_risk.approved:
+            sm.transition(TradeState.REJECTED)
+            self.ledger.append("PRE_EXECUTION_REJECTED", proposal.signal_id, {"reasons": fresh_risk.reason_codes, "context": asdict(context)})
+            return sm, None
+        if fresh_risk.volume != approved_risk.volume:
+            sm.transition(TradeState.REJECTED)
+            self.ledger.append("PRE_EXECUTION_REJECTED", proposal.signal_id, {"reasons": ("APPROVED_VOLUME_CHANGED",), "approved_volume": approved_risk.volume, "fresh_volume": fresh_risk.volume, "context": asdict(context)})
+            return sm, None
+
         request = OrderRequest(str(uuid4()), proposal.signal_id, proposal.symbol, proposal.side, fresh_risk.volume, proposal.stop_loss, proposal.take_profit, self.broker_mode())
         self.ledger.append("ORDER_SUBMIT_INTENT", proposal.signal_id, asdict(request))
         sm.transition(TradeState.ORDER_SUBMITTED)
@@ -69,4 +97,8 @@ class VanguardPipeline:
         return sm, result
 
     def broker_mode(self):
-        return getattr(self.broker, "mode", "PAPER")
+        mode = getattr(self.broker, "mode", None)
+        if mode is None:
+            from vanguard.interfaces import ExecutionMode
+            return ExecutionMode.PAPER
+        return mode

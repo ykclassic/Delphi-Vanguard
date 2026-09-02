@@ -14,6 +14,7 @@ class ApprovalRequest:
     approval_id: str
     signal_id: str
     expires_at: datetime
+    risk: RiskDecision
 
 
 @dataclass(frozen=True)
@@ -34,7 +35,7 @@ class ApprovalStore:
     def create(self, proposal: SignalProposal, risk: RiskDecision) -> ApprovalRequest:
         if not risk.approved:
             raise ValueError("cannot request approval for a failed risk decision")
-        request = ApprovalRequest(token_urlsafe(18), proposal.signal_id, proposal.expires_at)
+        request = ApprovalRequest(token_urlsafe(18), proposal.signal_id, proposal.expires_at, risk)
         with self._lock:
             self._pending[request.approval_id] = request
         return request
@@ -54,3 +55,10 @@ class ApprovalStore:
             self._pending.pop(approval_id)
             self._used.add(approval_id)
         return ApprovalDecision(approval_id, request.signal_id, approver, approved, now)
+
+    def get(self, approval_id: str) -> ApprovalRequest:
+        with self._lock:
+            request = self._pending.get(approval_id)
+            if request is None or approval_id in self._used:
+                raise ValueError("approval is missing or already consumed")
+            return request

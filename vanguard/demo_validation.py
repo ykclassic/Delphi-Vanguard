@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from tempfile import TemporaryDirectory
 
 from vanguard.approval import ApprovalStore
-from vanguard.interfaces import AccountSnapshot, Quote, SignalProposal, Side
+from vanguard.interfaces import Quote, RiskContext, SignalProposal, Side
 from vanguard.ledger import SQLiteLedger
 from vanguard.market_data import PaperMarketData
 from vanguard.paper import PaperBroker
@@ -19,10 +19,17 @@ def run() -> str:
     market = PaperMarketData({"EURUSD": quote})
     broker = PaperBroker(market)
     proposal = SignalProposal("demo-signal-1", "EURUSD", Side.BUY, "demo", "1.0", now, now + timedelta(seconds=30), 1.1000, 1.0980, 1.1045, .9, "deterministic demo", {"demo": 1.0})
+    context = RiskContext(0, 0.0, 0.0, 100_000.0)
     with TemporaryDirectory() as tmp:
         ledger = SQLiteLedger(f"{tmp}/demo.db")
-        pipeline = VanguardPipeline(broker, RiskEngine(RiskLimits(max_spread=.001)), ApprovalStore(), ledger)
-        sm, risk, approval = pipeline.evaluate(proposal, value_per_price_unit=100_000)
+        pipeline = VanguardPipeline(
+            broker,
+            RiskEngine(RiskLimits(max_spread=.001)),
+            ApprovalStore(),
+            ledger,
+            risk_context_provider=lambda: context,
+        )
+        sm, risk, approval = pipeline.evaluate(proposal, value_per_price_unit=context.value_per_price_unit)
         if approval is None or not risk.approved:
             raise AssertionError(f"demo risk gate failed: {risk}")
         sm, result = pipeline.execute_after_approval(proposal, approval.approval_id, "demo-operator", risk)

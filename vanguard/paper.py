@@ -3,11 +3,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from vanguard.interfaces import AccountSnapshot, ExecutionMode, OrderRequest, OrderResult, Quote, Side
+from vanguard.interfaces import AccountSnapshot, ExecutionMode, OrderRequest, OrderResult, Quote
 from vanguard.market_data import PaperMarketData
 
 
 class PaperBroker:
+    mode = ExecutionMode.PAPER
+
     def __init__(self, market_data: PaperMarketData, equity: float = 10_000.0) -> None:
         self.market_data = market_data
         self.equity = equity
@@ -21,6 +23,8 @@ class PaperBroker:
         return self.market_data.quote(symbol)
 
     def submit(self, request: OrderRequest) -> OrderResult:
+        if request.mode is not ExecutionMode.PAPER:
+            raise ValueError("PaperBroker accepts PAPER execution mode only")
         if request.client_order_id in self.orders:
             return self.orders[request.client_order_id]
         quote = self.quote(request.symbol)
