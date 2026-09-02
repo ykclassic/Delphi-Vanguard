@@ -35,6 +35,22 @@ class MT5Gateway:
             raise RuntimeError(f"MT5 tick unavailable: {symbol}")
         return Quote(symbol, float(tick.bid), float(tick.ask), "MT5", datetime.fromtimestamp(tick.time, tz=timezone.utc), str(getattr(tick, "time_msc", tick.time)))
 
+    def lookup_order(self, client_order_id: str) -> OrderResult | None:
+        """Find a prior Vanguard order by its deterministic MT5 comment identity."""
+        marker = f"Vanguard:{client_order_id}"
+        now = datetime.now(timezone.utc)
+        for getter, filled in ((getattr(self.mt5, "positions_get", None), True), (getattr(self.mt5, "orders_get", None), False)):
+            if getter is None:
+                continue
+            rows = getter() or ()
+            for row in rows:
+                if str(getattr(row, "comment", "")) != marker:
+                    continue
+                ticket = getattr(row, "ticket", None)
+                price = getattr(row, "price_open", getattr(row, "price_current", None))
+                return OrderResult(client_order_id, str(ticket) if ticket is not None else None, True, filled, float(price) if price is not None else None, "recovered from MT5", now)
+        return None
+
     def submit(self, request: OrderRequest) -> OrderResult:
         if self.mode is ExecutionMode.LIVE:
             raise RuntimeError("live execution disabled")
