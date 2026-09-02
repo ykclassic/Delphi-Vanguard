@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import isfinite
 
-from vanguard.interfaces import AccountSnapshot, Quote, RiskDecision, Side, SignalProposal
+from vanguard.interfaces import AccountSnapshot, Quote, RiskContext, RiskDecision, Side, SignalProposal
 
 
 @dataclass(frozen=True)
@@ -24,6 +24,7 @@ class RiskEngine:
         self.limits = limits
 
     def evaluate(self, proposal: SignalProposal, quote: Quote, account: AccountSnapshot, open_positions: int, daily_loss_percent: float, drawdown_percent: float, value_per_price_unit: float) -> RiskDecision:
+        context = RiskContext(open_positions, daily_loss_percent, drawdown_percent, value_per_price_unit)
         reasons: list[str] = []
         if proposal.expires_at <= quote.timestamp:
             reasons.append("SIGNAL_EXPIRED")
@@ -38,11 +39,11 @@ class RiskEngine:
             reasons.append("INVALID_SELL_TARGET")
         if quote.spread > self.limits.max_spread:
             reasons.append("SPREAD_TOO_WIDE")
-        if open_positions >= self.limits.max_positions:
+        if context.open_positions >= self.limits.max_positions:
             reasons.append("MAX_POSITIONS")
-        if daily_loss_percent >= self.limits.max_daily_loss_percent:
+        if context.daily_loss_percent >= self.limits.max_daily_loss_percent:
             reasons.append("DAILY_LOSS_LIMIT")
-        if drawdown_percent >= self.limits.max_drawdown_percent:
+        if context.drawdown_percent >= self.limits.max_drawdown_percent:
             reasons.append("DRAWDOWN_LIMIT")
         if account.free_margin <= 0 or account.equity <= 0:
             reasons.append("INSUFFICIENT_MARGIN")
@@ -55,7 +56,7 @@ class RiskEngine:
         if rr < 2.0:
             reasons.append("MIN_RR_NOT_MET")
         risk_amount = account.equity * self.limits.risk_percent / 100.0
-        raw_volume = risk_amount / (stop_distance * value_per_price_unit) if stop_distance and value_per_price_unit > 0 else 0.0
+        raw_volume = risk_amount / (stop_distance * context.value_per_price_unit) if stop_distance else 0.0
         if not isfinite(raw_volume) or raw_volume <= 0:
             reasons.append("POSITION_SIZE_UNAVAILABLE")
             volume = 0.0
@@ -65,4 +66,4 @@ class RiskEngine:
             if volume < self.limits.min_volume:
                 reasons.append("MIN_VOLUME_NOT_MET")
                 volume = 0.0
-        return RiskDecision(not reasons, tuple(reasons), round(volume, 8), risk_amount, stop_distance, reward_distance, rr, quote.timestamp)
+        return RiskDecision(not reasons, tuple(reasons), round(volume, 8), risk_amount, stop_distance, reward_distance, rr, quote.timestamp, context)
