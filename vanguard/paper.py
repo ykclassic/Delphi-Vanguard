@@ -22,11 +22,15 @@ class PaperBroker:
     def quote(self, symbol: str) -> Quote:
         return self.market_data.quote(symbol)
 
+    def lookup_order(self, client_order_id: str) -> OrderResult | None:
+        return self.orders.get(client_order_id)
+
     def submit(self, request: OrderRequest) -> OrderResult:
         if request.mode is not ExecutionMode.PAPER:
             raise ValueError("PaperBroker accepts PAPER execution mode only")
-        if request.client_order_id in self.orders:
-            return self.orders[request.client_order_id]
+        existing = self.orders.get(request.client_order_id)
+        if existing is not None:
+            return existing
         quote = self.quote(request.symbol)
         price = quote.executable_price(request.side)
         result = OrderResult(request.client_order_id, f"PAPER-{request.client_order_id}", True, True, price, "paper fill", datetime.now(timezone.utc))
