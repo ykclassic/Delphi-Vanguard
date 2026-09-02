@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Mapping, Protocol, Sequence
+from typing import Mapping, Protocol
 
 
 class Side(str, Enum):
@@ -69,6 +69,22 @@ class SignalProposal:
 
 
 @dataclass(frozen=True)
+class RiskContext:
+    open_positions: int
+    daily_loss_percent: float
+    drawdown_percent: float
+    value_per_price_unit: float
+
+    def __post_init__(self) -> None:
+        if self.open_positions < 0:
+            raise ValueError("open_positions cannot be negative")
+        if self.daily_loss_percent < 0 or self.drawdown_percent < 0:
+            raise ValueError("loss and drawdown percentages cannot be negative")
+        if self.value_per_price_unit <= 0:
+            raise ValueError("value_per_price_unit must be positive")
+
+
+@dataclass(frozen=True)
 class RiskDecision:
     approved: bool
     reason_codes: tuple[str, ...]
@@ -78,6 +94,7 @@ class RiskDecision:
     reward_distance: float
     risk_reward: float
     quote_timestamp: datetime
+    context: RiskContext
 
 
 @dataclass(frozen=True)
