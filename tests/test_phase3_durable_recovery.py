@@ -35,7 +35,6 @@ def test_approval_survives_store_restart():
         assert risk.approved and request is not None
         approvals.close()
         ledger.close()
-
         reopened = ApprovalStore(path)
         restored = reopened.get(request.approval_id)
         assert restored.signal_id == proposal.signal_id
@@ -52,16 +51,13 @@ def test_approved_execution_recovers_after_interruption_without_new_order_id():
         assert risk.approved and request is not None
         decision = approvals.decide(request.approval_id, "operator", True)
         ledger.append("HUMAN_DECISION", proposal.signal_id, {"approval_id": decision.approval_id, "approved": True})
-
-        recovered_pipeline = VanguardPipeline(broker, pipeline.risk_engine, approvals, ledger, pipeline.risk_context_provider)
-        sm, result = recovered_pipeline.recover_execution(proposal, request.approval_id)
+        recovered = VanguardPipeline(broker, pipeline.risk_engine, approvals, ledger, pipeline.risk_context_provider)
+        sm, result = recovered.recover_execution(proposal, request.approval_id)
         assert result is not None
         assert sm.state.value == "POSITION_OPEN"
-        client_id = recovered_pipeline.client_order_id(request.approval_id, proposal.signal_id)
-        assert result.client_order_id == client_id
+        assert result.client_order_id == recovered.client_order_id(request.approval_id, proposal.signal_id)
         assert len(broker.orders) == 1
-
-        sm2, result2 = recovered_pipeline.recover_execution(proposal, request.approval_id)
+        sm2, result2 = recovered.recover_execution(proposal, request.approval_id)
         assert sm2.state.value == "POSITION_OPEN"
         assert result2 == result
         assert len(broker.orders) == 1
