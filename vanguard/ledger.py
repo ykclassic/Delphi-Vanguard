@@ -5,6 +5,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from hashlib import sha256
+from pathlib import Path
 from threading import Lock
 from typing import Mapping
 from uuid import uuid4
@@ -14,7 +15,10 @@ class SQLiteLedger:
     def __init__(self, path: str = "data/vanguard.db") -> None:
         self.path = path
         self._lock = Lock()
-        self._conn = sqlite3.connect(path, check_same_thread=False)
+        db_path = Path(path)
+        if db_path.parent != Path("."):
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.execute("CREATE TABLE IF NOT EXISTS events (event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, event_type TEXT NOT NULL, aggregate_id TEXT NOT NULL, payload_json TEXT NOT NULL, payload_hash TEXT NOT NULL UNIQUE)")
