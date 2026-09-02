@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from tempfile import TemporaryDirectory
 
 from vanguard.approval import ApprovalStore
-from vanguard.interfaces import RiskContext, SignalProposal, Side
+from vanguard.interfaces import Quote, RiskContext, SignalProposal, Side
 from vanguard.ledger import SQLiteLedger
 from vanguard.market_data import PaperMarketData
 from vanguard.paper import PaperBroker
@@ -17,7 +17,7 @@ def make_proposal():
 
 def make_components(path):
     now = datetime.now(timezone.utc)
-    quote = __import__("vanguard.interfaces", fromlist=["Quote"]).Quote("EURUSD", 1.0999, 1.1001, "PAPER", now)
+    quote = Quote("EURUSD", 1.0999, 1.1001, "PAPER", now)
     broker = PaperBroker(PaperMarketData({"EURUSD": quote}))
     ledger = SQLiteLedger(path)
     approvals = ApprovalStore(path)
@@ -32,8 +32,7 @@ def test_approval_survives_store_restart():
         pipeline, _, approvals, ledger = make_components(path)
         proposal = make_proposal()
         _, risk, request = pipeline.evaluate(proposal, value_per_price_unit=100_000.0)
-        assert risk.approved
-        assert request is not None
+        assert risk.approved and request is not None
         approvals.close()
         ledger.close()
 
